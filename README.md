@@ -5,7 +5,7 @@ luigi-extensions
 Install
 -------
 
-    pip install git+git@github.com/luigi-extensions.git
+    pip install git+git://github.com/zh012/luigi-extensions.git
 
 
 Modules
