@@ -4,6 +4,7 @@ from itertools import chain
 import json
 import luigi
 from luigi import configuration, s3, format
+from .polyfiller import guess_format
 
 
 class ManifestedInputStream(object):
@@ -68,11 +69,26 @@ class S3WorkspaceMixin(S3ConfigMixin):
     def destory(self):
         self.get_s3_target('').remove()
 
+    @property
+    def md5(self):
+        raise NotImplementedError()
 
-def guess_format(f):
-    if f.endswith('.gz'):
-        return format.Gzip
-    return format.Text
+    @property
+    def target(self):
+        raise NotImplementedError()
+
+    def check_job_conflict(self):
+        flag = self.get_s3_target('checksum')
+        if flag.exists():
+            if flag.open().read() != self.md5:
+                raise RuntimeError('{} job [{}] conflict.'.format(self.__class__.__name__, self.target))
+        else:
+            with flag.open('w') as out:
+                out.write(self.md5)
+
+    def write_to_file(self, filename, content):
+        with self.get_s3_target(filename).open('w') as out:
+            out.write(content)
 
 
 @contextmanager

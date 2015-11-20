@@ -1,0 +1,13 @@
+[s3]
+aws_access_key_id: <aws key>
+aws_secret_access_key: <aws secret key>
+
+[redshift]
+marker_table: luigi_marker_table
+
+[redshift-cluster]
+host: {{ host }}
+port: 5439
+dbname: {{ dbname }}
+user: {{ user }}
+password: {{ password }}

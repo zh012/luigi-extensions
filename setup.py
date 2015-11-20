@@ -10,6 +10,11 @@ options = dict(
     author_email='hui.calife@gmail.com',
     url='https://github.com/zh012/luigi-extensions.git',
     packages=['luigi_extensions'],
+    package_data={
+        'luigi_extensions': [
+            'client.cfg.tmpl',
+        ],
+    },
     license='MIT',
     zip_safe=False,
     platforms='any',
