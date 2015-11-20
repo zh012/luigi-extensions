@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 import luigi
 from luigi import parameter
-from .postgres import ConnectionlMixin, BaseExecuteSqlTask
-from .s3 import S3ConfigMixin
+from .postgres import Postgres
+from .s3 import S3
 
 
 _redshift_unload_template = '''\
@@ -18,14 +18,13 @@ CREDENTIALS 'aws_access_key_id={aws_access_key_id};aws_secret_access_key={aws_se
 {options};'''
 
 
-class UnloadToS3(S3ConfigMixin, ConnectionlMixin, luigi.Task):
+class UnloadToS3(luigi.Task):
     s3conf = luigi.Parameter(default='s3')
-    dbconf = luigi.Parameter(default='redshift')
-    parallel_off = luigi.BoolParameter(default=False)
-    select_file = luigi.Parameter(default='')
-    select = luigi.Parameter(default='')
-    options = luigi.Parameter(default='')
     s3path = luigi.Parameter()
+    rsconf = luigi.Parameter()
+    select = luigi.Parameter()
+    parallel_off = luigi.BoolParameter(default=False)
+    options = luigi.Parameter(default='')
 
     def run(self):
         if self.options and 'parallel' in self.options.lower():
@@ -35,24 +34,29 @@ class UnloadToS3(S3ConfigMixin, ConnectionlMixin, luigi.Task):
             options += ' MANIFEST'
         if self.parallel_off:
             options += " PARALLEL OFF"
+        try:
+            with open(self.select, 'r') as fp:
+                select = fp.read()
+        except:
+            select = self.select
 
         context = {
             'options': options,
-            'statement': (self.select or open(self.select_file, 'r').read()).replace("'", "''"),
+            'statement': select.replace("'", "''"),
             's3path': self.s3path,
         }
-        context.update(self.get_s3_config())
+        context.update(S3(self.s3conf).conf)
         sql = _redshift_unload_template.format(**context)
-        self.run_sql(sql)
+        Postgres(self.rsconf).run_sql(sql)
 
     def output(self):
-        return self.get_s3_target(self.s3path + 'manifest')
+        return S3(self.s3conf).get_target(self.s3path + 'manifest')
 
 
-class CopyFromS3(S3ConfigMixin, ConnectionlMixin, BaseExecuteSqlTask):
+class CopyFromS3(luigi.Task):
     s3conf = luigi.Parameter(default='s3')
-    dbconf = luigi.Parameter(default='redshift')
     s3path = luigi.Parameter()
+    rsconf = luigi.Parameter()
     table = luigi.Parameter()
     options = luigi.Parameter(default='')
     manifest = luigi.BoolParameter(default=False)
@@ -79,7 +83,7 @@ class CopyFromS3(S3ConfigMixin, ConnectionlMixin, BaseExecuteSqlTask):
             'table_schema': self.table_schema,
             's3path': self.s3path,
         }
-        context.update(self.get_s3_config())
+        context.update(S3(self.s3conf).conf)
 
         # generate copy sql
         sql = ''
@@ -91,3 +95,10 @@ class CopyFromS3(S3ConfigMixin, ConnectionlMixin, BaseExecuteSqlTask):
             sql += 'truncate {table};'
         sql += _redshift_copy_template
         return sql.format(**context)
+
+    def run(self):
+        Postgres(self.rsconf).run_sql(self.get_sql())
+        self._complete = True
+
+    def complete(self):
+        return getattr(self, '_complete', False)

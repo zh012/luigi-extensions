@@ -2,48 +2,49 @@
 import psycopg2
 import luigi
 from luigi.postgres import PostgresTarget
+from .grocery import ConfiguredObject
 
 
-class ConnectionlMixin(object):
-    _dbconf_field_name = 'dbconf'
-
-    def get_dbconf(self):
-        return luigi.configuration.get_config().items(getattr(self, self._dbconf_field_name))
+class Postgres(ConfiguredObject):
+    _dsn_keys = ['host', 'port', 'dbname', 'user', 'password']
 
     def connect(self):
-        dsn = ' '.join('{}={}'.format(k, v) for k, v in self.get_dbconf())
+        dsn = ' '.join('{}={}'.format(k, v) for k, v in self.conf.items() if k in self._dsn_keys)
         return psycopg2.connect(dsn)
 
     def run_sql(self, sql):
         with self.connect() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(sql)
+        conn.commit()
 
-    def get_db_target(self, table, update_id, target_cls=PostgresTarget):
-        dbconf = dict(self.get_dbconf())
+    def get_target(self, table, update_id, target_cls=PostgresTarget):
         return target_cls(
-            host='{}:{}'.format(dbconf['host'], dbconf['port']),
-            database=dbconf['dbname'],
-            user=dbconf['user'],
-            password=dbconf['password'],
+            host='{}:{}'.format(self.conf['host'], self.conf['port']),
+            database=self.conf['dbname'],
+            user=self.conf['user'],
+            password=self.conf['password'],
             table=table,
             update_id=update_id
         )
 
 
-class BaseExecuteSqlTask(luigi.Task):
-    def run(self):
-        self.run_sql(self.get_sql())
-        self._complete = True
+class SimpleSqlTask(luigi.Task):
+    dbconf = luigi.Parameter()
+    sql = luigi.Parameter()
 
     def complete(self):
         return getattr(self, '_complete', False)
 
-
-class SqlTask(ConnectionlMixin, BaseExecuteSqlTask):
-    dbconf = luigi.Parameter()
-    sql = luigi.Parameter(default='')
-    inline_sql = luigi.Parameter(default='')
-
     def get_sql(self):
-        return (self.inline_sql or open(self.sql, 'r').read())
+        try:
+            return open(self.sql, 'r').read()
+        except:
+            return self.sql
+
+    def get_postgres(self):
+        return Postgres(self.dbconf)
+
+    def run(self):
+        self.get_postgres().run_sql(self.get_sql())
+        self._complete = True

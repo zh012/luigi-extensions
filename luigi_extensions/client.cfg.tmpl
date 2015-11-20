@@ -1,6 +1,9 @@
 [s3]
-aws_access_key_id: <aws key>
-aws_secret_access_key: <aws secret key>
+aws_access_key_id: {{ aws_access_key_id }}
+aws_secret_access_key: {{ aws_secret_access_key }}
+
+[postgres]
+marker_table: luigi_marker_table
 
 [redshift]
 marker_table: luigi_marker_table

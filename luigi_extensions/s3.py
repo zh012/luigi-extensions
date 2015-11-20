@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
-from contextlib import contextmanager
 from itertools import chain
 import json
 import luigi
-from luigi import configuration, s3, format
-from .polyfiller import guess_format
+from luigi import s3
+from .grocery import guess_format, ConfiguredObject
 
 
 class ManifestedInputStream(object):
@@ -43,72 +42,46 @@ class S3Target(s3.S3Target):
         return super(S3Target, self).open(mode or 'r')
 
 
-class S3ConfigMixin(object):
-    def get_s3_config(self):
-        return dict(configuration.get_config().items(self.s3conf))
+class S3(ConfiguredObject):
+    def get_client(self):
+        return s3.S3Client(**self.conf)
 
-    def get_s3_client(self):
-        return s3.S3Client(**self.get_s3_config())
-
-    def get_s3_target(self, path, format=None):
-        return S3Target(path, format, self.get_s3_client())
+    def get_target(self, path, fmt=None):
+        return S3Target(path, fmt or guess_format(path), self.get_client())
 
 
-class S3WorkspaceMixin(S3ConfigMixin):
-    s3workspace = None
-    s3format = format.Gzip
+class S3Workspace(S3):
+    def _init_(self, root):
+        self.root = root.rstrip('/')
 
-    def get_s3_path(self, path):
+    def get_path(self, path):
         if not path.startswith('s3://'):
-            path = '/'.join([self.s3workspace.rstrip('/'), path.lstrip('/')])
+            path = '/'.join([self.root, path.lstrip('/')])
         return path
 
-    def get_s3_target(self, path, format=None):
-        return super(S3WorkspaceMixin, self).get_s3_target(self.get_s3_path(path), format or self.s3format)
+    def get_target(self, path, fmt=None):
+        return super(S3Workspace, self).get_target(self.get_path(path), fmt)
 
     def destory(self):
-        self.get_s3_target('').remove()
+        self.get_target('').remove()
 
-    @property
-    def md5(self):
-        raise NotImplementedError()
-
-    @property
-    def target(self):
-        raise NotImplementedError()
-
-    def check_job_conflict(self):
-        flag = self.get_s3_target('checksum')
-        if flag.exists():
-            if flag.open().read() != self.md5:
-                raise RuntimeError('{} job [{}] conflict.'.format(self.__class__.__name__, self.target))
-        else:
-            with flag.open('w') as out:
-                out.write(self.md5)
-
-    def write_to_file(self, filename, content):
-        with self.get_s3_target(filename).open('w') as out:
+    def write(self, filename, content):
+        with self.get_target(filename).open('w') as out:
             out.write(content)
 
-
-@contextmanager
-def open_manifest(target, fmt=None):
-    manifest = json.loads(target.open('r').read())
-    urls = [e['url'] for e in manifest['entries']]
-    fps = [s3.S3Target(u, guess_format(u), client=target.fs).open('r') for u in urls]
-    try:
-        yield chain(*fps)
-    finally:
-        for fp in fps:
-            try:
-                fp.close()
-            except:
-                pass
+    def touch(self, fingerprint):
+        flag = self.get_target('fingerprint')
+        if flag.exists():
+            if flag.open().read() != fingerprint:
+                raise RuntimeError('Workspace already exists with differnt fingerprint.'.format(self.root))
+        else:
+            with flag.open('w') as out:
+                out.write(fingerprint)
 
 
-class S3PathTask(S3ConfigMixin, luigi.ExternalTask):
+class S3PathTask(luigi.ExternalTask):
     path = luigi.Parameter()
-    s3conf = luigi.Parameter(default='s3')
+    s3conf = luigi.Parameter()
 
     def output(self):
-        return self.get_s3_target(self.path, format=guess_format(self.path))
+        return S3(self.s3conf).get_target(self.path)
